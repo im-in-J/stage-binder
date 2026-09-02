@@ -95,6 +95,10 @@
   }
   .admin-panel .hint{font-size:12.5px; color:var(--ink-3); margin:8px 0 0}
   .admin-panel .hint a{color:var(--accent)}
+  .admin-panel .msg{color:#C0392B; font-weight:500; white-space:pre-wrap}
+  .admin-panel .msg[hidden]{display:none}
+  :root[data-theme="dark"] .admin-panel .msg{color:#FF8A7A}
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .admin-panel .msg{color:#FF8A7A} }
   .admin-panel .row + .row{margin-top:8px}
   .admin-panel .srv{margin-top:10px; font-size:12.5px; color:var(--ink-3)}
   .admin-panel .srv summary{cursor:pointer}
@@ -501,6 +505,7 @@
     <div class="row" id="admin-login-row">
       <input type="password" id="admin-pin" placeholder="관리자 비밀번호" autocomplete="current-password">
       <button class="btn primary" id="btn-login">관리자 로그인</button>
+      <button class="btn" id="btn-srv-test">서버 진단</button>
     </div>
     <div class="row admin-only">
       <button class="btn" id="btn-change-pin">비밀번호 변경</button>
@@ -508,6 +513,7 @@
       <button class="btn" id="btn-logout">로그아웃</button>
     </div>
     <p class="hint" id="admin-hint"></p>
+    <p class="hint msg" id="admin-msg" hidden></p>
     <details class="srv">
       <summary>서버 주소 직접 지정 (테스트용 · 이 기기만)</summary>
       <div class="row">
@@ -639,24 +645,44 @@
   var chipLabel = document.getElementById("save-label");
   function setStatus(s, label){ chip.dataset.s = s; chipLabel.textContent = label; }
 
+  async function readJson(r){
+    if (!r.ok) throw new Error("http " + r.status);
+    var text = await r.text();
+    var j = null;
+    try{ j = JSON.parse(text); }catch(e){}
+    if (!j || typeof j !== "object"){
+      throw new Error(/<html|<!doctype|<script/i.test(text) ? "html" : "bad");
+    }
+    return j;
+  }
   async function apiPost(body){
     var r = await fetch(serverUrl(), {
       method: "POST",
+      redirect: "follow",
       headers: {"Content-Type": "text/plain;charset=utf-8"},
       body: JSON.stringify(body)
     });
-    if (!r.ok) throw new Error("http " + r.status);
-    var j = await r.json();
-    if (!j || typeof j !== "object") throw new Error("bad");
-    return j;
+    return readJson(r);
   }
   async function apiGet(){
     var base = serverUrl();
-    var r = await fetch(base + (base.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now(), {cache:"no-store"});
-    if (!r.ok) throw new Error("http " + r.status);
-    var j = await r.json();
-    if (!j || !j.ok) throw new Error("bad");
+    var r = await fetch(base + (base.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now(), {cache:"no-store", redirect:"follow"});
+    var j = await readJson(r);
+    if (!j.ok) throw new Error("bad");
     return j;
+  }
+  // 왜 실패했는지 사람이 읽을 수 있게
+  function explainErr(e){
+    var m = String((e && e.message) || e || "");
+    if (m === "html") return "서버가 JSON 대신 웹페이지를 보냈어요 — 배포 설정에서 '액세스 권한: 모든 사용자', '실행 사용자: 나'인지 확인 후 새 버전으로 다시 배포";
+    if (m === "bad") return "서버 응답 형식이 이상해요 — server.gs가 전부 붙여넣어졌는지 확인";
+    if (/^http /.test(m)) return "서버 오류 (HTTP " + m.slice(5) + ")";
+    return "네트워크/CORS 오류 — 서버 주소가 .../exec 로 끝나는지, 인터넷 연결 확인";
+  }
+  function adminMsg(text){
+    var el = document.getElementById("admin-msg");
+    el.hidden = !text;
+    el.textContent = text || "";
   }
 
   var saveTimer = null, failCount = 0, serverHasPin = false;
@@ -721,8 +747,13 @@
     if (p.length < 4){ setStatus("error", "4자 이상 입력"); return; }
     setStatus("saving", "확인 중…");
     try{
+      adminMsg("");
       var j = await apiPost({action:"login", pin:p});
-      if (!j.ok){ setStatus("error", j.error === "bad_pin" ? "비밀번호가 달라요" : "로그인 실패"); return; }
+      if (!j.ok){
+        setStatus("error", j.error === "bad_pin" ? "비밀번호가 달라요" : "로그인 실패");
+        adminMsg(j.error === "bad_pin" ? "비밀번호가 달라요." : "로그인 실패: " + (j.error || "?"));
+        return;
+      }
       try{ localStorage.setItem(PIN_KEY, p); }catch(e){}
       serverHasPin = true;
       document.getElementById("admin-pin").value = "";
@@ -731,6 +762,8 @@
       if (j.created) alert("이 비밀번호가 관리자 비밀번호로 정해졌어요. 잊지 마세요!");
     }catch(e){
       setStatus("error", "서버 연결 실패");
+      adminMsg("서버 연결 실패: " + explainErr(e));
+      document.getElementById("admin-panel").classList.add("on");
     }
   });
   document.getElementById("admin-pin").addEventListener("keydown", function(e){
@@ -761,6 +794,16 @@
     var v = document.getElementById("srv-url").value.trim();
     try{ v ? localStorage.setItem(SERVER_KEY, v) : localStorage.removeItem(SERVER_KEY); }catch(e){}
     location.reload();
+  });
+  document.getElementById("btn-srv-test").addEventListener("click", async function(){
+    if (!serverUrl()){ adminMsg("서버 주소가 없어요."); return; }
+    adminMsg("진단 중…");
+    var lines = ["주소: " + serverUrl()];
+    try{ var g = await apiGet(); lines.push("읽기(GET): OK · 비밀번호 " + (g.hasPin ? "설정됨" : "아직 없음") + " · 서버 데이터 " + (g.site ? "있음" : "없음")); }
+    catch(e){ lines.push("읽기(GET): 실패 — " + explainErr(e)); }
+    try{ var p = await apiPost({action:"ping"}); lines.push("쓰기(POST): " + (p && p.error === "bad_action" ? "OK" : "응답 이상 " + JSON.stringify(p).slice(0, 60))); }
+    catch(e2){ lines.push("쓰기(POST): 실패 — " + explainErr(e2)); }
+    adminMsg(lines.join("\n"));
   });
   document.getElementById("btn-logout").addEventListener("click", logout);
 
@@ -1223,6 +1266,7 @@
       if (!isAdmin()) applyMode();
     }catch(e){
       setSync("err", "서버 연결 실패");
+      adminMsg("서버 연결 실패: " + explainErr(e));
     }
   }
   async function pushAtt(sid, mid, status){
