@@ -242,12 +242,27 @@
 
   /* ── 일정표 ─────────────────────── */
   .me-bar{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px}
-  .me-bar label{font-size:12px; font-weight:700; color:var(--ink-3); letter-spacing:.08em}
-  .me-bar select{
+  .me-set{
+    flex:1 1 100%; display:grid; gap:8px; padding:12px 14px;
+    background:var(--accent-soft); border:1px solid var(--accent); border-radius:10px;
+  }
+  .me-set[hidden]{display:none}
+  .me-set label{font-size:14px; font-weight:700; color:var(--ink)}
+  .me-set label small{display:block; font-weight:400; font-size:12.5px; color:var(--ink-2); margin-top:2px}
+  .me-set select{
     border:1px solid var(--line); border-radius:8px; background:var(--surface);
-    padding:9px 10px; min-height:42px; font-size:14px; color:var(--ink); max-width:210px;
+    padding:9px 10px; min-height:44px; font-size:15px; color:var(--ink); width:100%;
+  }
+  .me-now{display:inline-flex; align-items:center; gap:8px; font-size:13.5px; color:var(--ink-2)}
+  .me-now[hidden]{display:none}
+  .me-now::before{content:""; width:8px; height:8px; border-radius:50%; background:var(--c, var(--accent))}
+  .me-now b{color:var(--ink)}
+  .me-change{
+    appearance:none; background:none; border:none; padding:2px 4px; font-size:12.5px;
+    color:var(--accent); text-decoration:underline; text-underline-offset:2px;
   }
   .me-bar .spacer{flex:1}
+  #btn-att-refresh .ic{margin-right:4px}
   .sync-chip{
     font-size:12px; color:var(--ink-2); display:inline-flex; align-items:center; gap:6px;
     border:1px solid var(--line); border-radius:999px; padding:4px 10px; background:var(--surface);
@@ -437,11 +452,9 @@
     nav.tabs{overflow-x:auto; scrollbar-width:none}
     nav.tabs::-webkit-scrollbar{display:none}
     nav.tabs button{padding:12px 7px 13px; font-size:14px}
-    .me-bar{display:grid; grid-template-columns:auto 1fr auto; gap:8px 10px}
-    .me-bar select{max-width:none; grid-column:2/4}
-    .me-bar .spacer{display:none}
-    .me-bar .sync-chip{grid-column:1/3; justify-self:start}
-    .me-bar #btn-att-refresh{grid-column:3/4; min-height:34px; padding:4px 12px; font-size:13px}
+    .me-bar{gap:8px}
+    .me-bar #btn-att-refresh{min-height:34px; padding:4px 10px; font-size:15px}
+    .me-bar #btn-att-refresh .lb{display:none}
     .sbar-face{padding:9px 8px 9px 11px; gap:9px; min-height:64px; border-radius:10px}
     .sb-date{width:56px}
     .sb-date b{font-size:21px}
@@ -506,11 +519,14 @@
   <!-- 일정표 -->
   <section class="view on" id="view-sched">
     <div class="me-bar">
-      <label for="me-sel">내 이름</label>
-      <select id="me-sel"></select>
+      <div class="me-set" id="me-set">
+        <label for="me-sel">누구세요? <small>한 번만 고르면 이 기기에서 계속 기억해요</small></label>
+        <select id="me-sel"></select>
+      </div>
+      <div class="me-now" id="me-now"><b id="me-name"></b><button class="me-change" id="btn-me-change">변경</button></div>
       <span class="spacer"></span>
       <span class="sync-chip" id="att-sync" data-s="idle"><span class="dot"></span><span id="att-sync-label">준비 중…</span></span>
-      <button class="btn" id="btn-att-refresh">새로고침</button>
+      <button class="btn" id="btn-att-refresh" aria-label="새로고침"><span class="ic">↻</span><span class="lb">새로고침</span></button>
     </div>
     <div class="sched-list" id="sched-list"></div>
     <div class="sched-foot admin-only">
@@ -1201,21 +1217,41 @@
     if (pulledFor !== base){ pulledFor = base; pullAtt(true); }
   }
 
-  /* 내 이름 */
+  /* 내 이름 — 한 번 고르면 기기에 저장, 이후엔 한 줄로 접힘 */
   var meSel = document.getElementById("me-sel");
+  var meChanging = false;
   function renderMeSelect(){
     var ms = state.members || [];
     if (meId && !ms.find(function(m){ return m.id === meId; })) meId = "";
-    meSel.innerHTML = '<option value="">— 선택 —</option>' + ms.map(function(m){
+    meSel.innerHTML = '<option value="">— 이름을 골라주세요 —</option>' + ms.map(function(m){
       return '<option value="' + esc(m.id) + '"' + (m.id === meId ? " selected" : "") + '>' +
         esc(m.name) + " · " + esc(m.short) + "</option>";
     }).join("");
+    renderMeBar();
+  }
+  function renderMeBar(){
+    var me = (state.members || []).find(function(m){ return m.id === meId; });
+    var set = document.getElementById("me-set"), now = document.getElementById("me-now");
+    set.hidden = !!me && !meChanging;
+    now.hidden = !me || meChanging;
+    if (me){
+      document.getElementById("me-name").textContent = me.name + " · " + me.short;
+      now.style.setProperty("--c", me.color);
+    }
+  }
+  function askMe(){
+    meChanging = true; renderMeBar();
+    meSel.focus();
+    meSel.scrollIntoView({block:"center", behavior:"smooth"});
   }
   meSel.addEventListener("change", function(){
     meId = meSel.value;
     try{ meId ? localStorage.setItem(ME_KEY, meId) : localStorage.removeItem(ME_KEY); }catch(e){}
+    meChanging = false;
+    renderMeBar();
     renderSched();
   });
+  document.getElementById("btn-me-change").addEventListener("click", askMe);
 
   /* 바 하나 */
   function countHtml(sid){
@@ -1325,8 +1361,7 @@
       flipped[sid] = false; bar.classList.remove("flip");
     }else if ((b = e.target.closest("[data-needme]"))){
       flipped[sid] = false; bar.classList.remove("flip");
-      meSel.focus();
-      meSel.scrollIntoView({block:"center", behavior:"smooth"});
+      askMe();
     }else if ((b = e.target.closest("[data-roster]"))){
       openRoster[sid] = !openRoster[sid];
       bar.classList.toggle("open", openRoster[sid]);
