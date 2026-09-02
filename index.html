@@ -677,7 +677,7 @@
     if (m === "html") return "서버가 JSON 대신 웹페이지를 보냈어요 — 배포 설정에서 '액세스 권한: 모든 사용자', '실행 사용자: 나'인지 확인 후 새 버전으로 다시 배포";
     if (m === "bad") return "서버 응답 형식이 이상해요 — server.gs가 전부 붙여넣어졌는지 확인";
     if (/^http /.test(m)) return "서버 오류 (HTTP " + m.slice(5) + ")";
-    return "네트워크/CORS 오류 — 서버 주소가 .../exec 로 끝나는지, 인터넷 연결 확인";
+    return "서버가 요청을 거부했어요(CORS). 십중팔구 배포 설정 문제 — Apps Script ▸ 배포 ▸ 배포 관리 ▸ 연필 ▸ 버전: 새 버전, 액세스 권한: '모든 사용자', 실행 사용자: '나' ▸ 배포. (그 외: 주소가 .../exec 로 끝나는지, 인터넷 연결)";
   }
   function adminMsg(text){
     var el = document.getElementById("admin-msg");
