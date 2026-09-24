@@ -73,7 +73,7 @@
   }
   nav.tabs button[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--song); font-weight:700}
   .save-chip{
-    font-size:12px; color:var(--ink-2); flex-shrink:0; margin-bottom:8px;
+    font-size:12px; color:var(--ink-2); flex-shrink:0; margin-bottom:2px;
     display:inline-flex; align-items:center; gap:6px;
     border:1px solid var(--line); border-radius:999px; padding:4px 10px;
     background:var(--surface); cursor:pointer;
@@ -518,15 +518,15 @@
 
   /* ── 곡 스위처 + 곡 헤더 ────────────── */
   .songsw{
-    display:flex; gap:3px; padding:3px; background:var(--surface-2); border:1px solid var(--line);
-    border-radius:999px; margin-bottom:8px; flex-shrink:0;
+    display:flex; gap:2px; padding:2px; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:999px; margin-bottom:2px; flex-shrink:0;
   }
   .songsw button{
     appearance:none; border:none; background:none; border-radius:999px; color:var(--ink-2);
-    padding:6px 13px; font-size:13.5px; font-weight:500; white-space:nowrap;
-    display:inline-flex; align-items:center; gap:7px;
+    padding:2px 10px; font-size:13px; line-height:1.5; font-weight:500; white-space:nowrap;
+    display:inline-flex; align-items:center; gap:6px;
   }
-  .songsw button i{width:8px; height:8px; border-radius:50%; background:var(--c); display:inline-block}
+  .songsw button i{width:7px; height:7px; border-radius:50%; background:var(--c); display:inline-block}
   .songsw button[aria-pressed="true"]{background:var(--surface); color:var(--ink); font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,.08)}
   .songhead{display:flex; align-items:baseline; gap:12px; margin:0 0 14px; flex-wrap:wrap}
   .songhead:empty, .songhead[hidden]{display:none}
@@ -571,13 +571,13 @@
     .sb-roster{padding-left:11px}
     .sb-admin{padding-left:0}
     .wrap{padding:0 12px 48px}
-    .topbar{margin:0 -12px 14px; padding:8px 12px 0; flex-wrap:wrap; gap:0 10px}
-    .songsw{order:1; margin-bottom:6px}
-    .save-chip{order:2; margin-left:auto; margin-bottom:6px}
+    .topbar{margin:0 -12px 12px; padding:6px 12px 0; flex-wrap:wrap; gap:0 10px}
+    .songsw{order:1; margin-bottom:0}
+    .save-chip{order:2; margin-left:auto; margin-bottom:0}
     nav.tabs{order:3; flex-basis:100%}
-    nav.tabs button{padding:10px 10px 11px; font-size:14.5px}
+    nav.tabs button{padding:8px 10px 9px; font-size:14.5px}
     .songhead h1{font-size:22px}
-    .lyric-edit .toolbar{top:98px}
+    .lyric-edit .toolbar{top:88px}
     .save-chip span:last-child{max-width:88px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
     .stage{aspect-ratio:4/3; border-radius:6px}
     .mchip .dot{width:31px; height:31px; font-size:10.5px; border-width:2.5px}
