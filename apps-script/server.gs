@@ -6,16 +6,19 @@
  *  2) 사이트 데이터 저장         동선표·가사·일정 등 data.json 전체 (관리자만 쓰기)
  *  3) 관리자 비밀번호 확인       처음 로그인할 때 정한 비밀번호가 그대로 관리자 비밀번호가 됨
  *
+ *  4) 이전 버전 보관                 사이트 데이터를 저장할 때마다 직전 버전을 최근 5개까지 보관, 복원 가능
+ *
  * 설치 순서는 같은 폴더의 README.md 를 보세요.
  * 모든 데이터는 이 스크립트의 속성(Script Properties)에 저장됩니다. 외부 파일·시트 없음.
  */
 
 var PIN_KEY = 'ADMIN_PIN';
 var ATT_KEY = 'attendance';
-var SITE_COUNT_KEY = 'site_n';
-var SITE_CHUNK_PREFIX = 'site_';
 var CHUNK_SIZE = 8000;          // Script Properties 값 하나당 9KB 제한 → 잘라서 저장
-var MAX_SITE_BYTES = 400000;    // 전체 한도 500KB 중 사이트 데이터 상한
+var MAX_SITE_BYTES = 120000;    // 사이트 데이터 한 벌 상한 (전체 한도 500KB 안에서 이전 버전 5개까지 보관)
+var HIST_INDEX_KEY = 'hist_index';   // [{key, at, bytes, note}] 최근 것이 앞
+var HIST_MAX = 5;
+var HIST_BUDGET = 330000;       // 이전 버전 보관에 쓸 총 바이트
 var VALID_STATUS = {y: true, l: true, n: true};
 var ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 var MAX_SESSIONS = 200;
@@ -47,6 +50,8 @@ function doPost(e) {
       case 'changePin': return handleChangePin(body);
       case 'saveSite':  return handleSaveSite(body);
       case 'resetSite': return handleResetSite(body);
+      case 'history':   return handleHistory(body);
+      case 'restoreSite': return handleRestoreSite(body);
       default:          return json({ok: false, error: 'bad_action'});
     }
   } finally {
@@ -125,49 +130,100 @@ function handleSaveSite(body) {
   }
   var text = JSON.stringify(site);
   if (text.length > MAX_SITE_BYTES) return json({ok: false, error: 'too_big'});
+  archiveCurrent('저장 전');
   writeSite(text);
   return json({ok: true});
 }
 
 function handleResetSite(body) {
   if (!checkPin(body)) return json({ok: false, error: 'bad_pin'});
+  archiveCurrent('기본값 되돌리기 전');
   clearSite();
   return json({ok: true});
 }
 
+/* ── 이전 버전 보관 ───────────────── */
+function handleHistory(body) {
+  if (!checkPin(body)) return json({ok: false, error: 'bad_pin'});
+  return json({ok: true, history: readHistIndex(), max: HIST_MAX});
+}
+
+function handleRestoreSite(body) {
+  if (!checkPin(body)) return json({ok: false, error: 'bad_pin'});
+  var key = String(body.key || '');
+  var entry = readHistIndex().filter(function (h) { return h.key === key; })[0];
+  if (!entry) return json({ok: false, error: 'no_such_version'});
+  var text = readChunks(key);
+  if (text === null) return json({ok: false, error: 'version_broken'});
+  archiveCurrent('복원 전');
+  writeSite(text);
+  return json({ok: true});
+}
+
+function readHistIndex() {
+  var v = parseJson(props().getProperty(HIST_INDEX_KEY));
+  return Array.isArray(v) ? v : [];
+}
+
+/** 지금 저장돼 있는 사이트 데이터를 이전 버전 목록 맨 앞에 넣는다 (같은 내용이면 건너뜀) */
+function archiveCurrent(note) {
+  var cur = readChunks('site');
+  if (cur === null || !cur.length) return;
+  var hist = readHistIndex();
+  if (hist.length) {
+    var last = readChunks(hist[0].key);
+    if (last === cur) return;
+  }
+  var key = 'h' + Date.now().toString(36);
+  writeChunks(key, cur);
+  hist.unshift({key: key, at: new Date().toISOString(), bytes: cur.length, note: note || ''});
+  // 개수·용량 초과분은 오래된 것부터 삭제
+  var total = 0, keep = [];
+  for (var i = 0; i < hist.length; i++) {
+    total += hist[i].bytes || 0;
+    if (i < HIST_MAX && total <= HIST_BUDGET) keep.push(hist[i]);
+    else deleteChunks(hist[i].key);
+  }
+  props().setProperty(HIST_INDEX_KEY, JSON.stringify(keep));
+}
+
 function readSite() {
+  var v = parseJson(readChunks('site'));
+  return (v && typeof v === 'object') ? v : null;
+}
+function writeSite(text) { writeChunks('site', text); }
+function clearSite() { deleteChunks('site'); }
+
+/* 큰 문자열을 <key>_n(개수) + <key>_0.. 으로 나눠 저장 (값 하나 9KB 제한 대응) */
+function readChunks(key) {
   var p = props();
-  var n = parseInt(p.getProperty(SITE_COUNT_KEY) || '0', 10);
+  var n = parseInt(p.getProperty(key + '_n') || '0', 10);
   if (!n) return null;
   var parts = [];
   for (var i = 0; i < n; i++) {
-    var c = p.getProperty(SITE_CHUNK_PREFIX + i);
+    var c = p.getProperty(key + '_' + i);
     if (c === null) return null;                 // 조각이 빠졌으면 없는 것으로
     parts.push(c);
   }
-  var v = parseJson(parts.join(''));
-  return (v && typeof v === 'object') ? v : null;
+  return parts.join('');
 }
-
-function writeSite(text) {
+function writeChunks(key, text) {
   var p = props();
-  var oldN = parseInt(p.getProperty(SITE_COUNT_KEY) || '0', 10);
-  var chunks = {};
-  var n = 0;
+  var oldN = parseInt(p.getProperty(key + '_n') || '0', 10);
+  var chunks = {}, n = 0;
   for (var i = 0; i < text.length; i += CHUNK_SIZE) {
-    chunks[SITE_CHUNK_PREFIX + n] = text.substring(i, i + CHUNK_SIZE);
+    chunks[key + '_' + n] = text.substring(i, i + CHUNK_SIZE);
     n++;
   }
-  chunks[SITE_COUNT_KEY] = String(n);
+  chunks[key + '_n'] = String(n);
   p.setProperties(chunks, false);
-  for (var j = n; j < oldN; j++) p.deleteProperty(SITE_CHUNK_PREFIX + j);
+  for (var j = n; j < oldN; j++) p.deleteProperty(key + '_' + j);
 }
-
-function clearSite() {
+function deleteChunks(key) {
   var p = props();
-  var n = parseInt(p.getProperty(SITE_COUNT_KEY) || '0', 10);
-  for (var i = 0; i < n; i++) p.deleteProperty(SITE_CHUNK_PREFIX + i);
-  p.deleteProperty(SITE_COUNT_KEY);
+  var n = parseInt(p.getProperty(key + '_n') || '0', 10);
+  for (var i = 0; i < n; i++) p.deleteProperty(key + '_' + i);
+  p.deleteProperty(key + '_n');
 }
 
 /* ── 공통 ─────────────────────────── */
