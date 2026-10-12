@@ -897,22 +897,93 @@
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(persist, 1500);
   }
+  /* ── 병합 저장 ──
+     관리자 화면은 열 때 받은 서버 데이터(baseSite)를 기억해 둔다.
+     저장 직전에 서버 최신본을 다시 받아 3-way 병합: 이 기기에서 바꾼 것만 얹고,
+     다른 기기(폰/PC/예전 탭)에서 그 사이 바꾼 것은 그대로 살린다. */
+  var baseSite = null, persisting = false, persistAgain = false;
+  function clone(x){ return x === undefined ? undefined : JSON.parse(JSON.stringify(x)); }
+  function stableStr(x){
+    if (Array.isArray(x)) return "[" + x.map(stableStr).join(",") + "]";
+    if (x && typeof x === "object") return "{" + Object.keys(x).sort().map(function(k){ return JSON.stringify(k) + ":" + stableStr(x[k]); }).join(",") + "}";
+    return x === undefined ? "~" : JSON.stringify(x);
+  }
+  function same(a, b){ return stableStr(a) === stableStr(b); }
+  function isObj(x){ return !!x && typeof x === "object" && !Array.isArray(x); }
+  function isIdList(x){ return Array.isArray(x) && x.every(function(e){ return isObj(e) && typeof e.id === "string"; }); }
+  function merge3(b, m, t){
+    if (same(m, b)) return clone(t);                 // 나는 안 건드림 → 서버 것
+    if (same(t, b) || same(t, m)) return clone(m);   // 서버는 그대로 → 내 것
+    if (isObj(m) && isObj(t)){                       // 둘 다 고침 → 항목별로 다시 병합
+      var out = {}, bb = isObj(b) ? b : {};
+      Object.keys(Object.assign({}, m, t)).forEach(function(k){
+        var v = merge3(bb[k], m[k], t[k]);
+        if (v !== undefined) out[k] = v;
+      });
+      return out;
+    }
+    if (isIdList(m) && isIdList(t) && (b === undefined || isIdList(b))) return mergeIdList(b || [], m, t);
+    return clone(m);                                 // 같은 칸을 양쪽이 다르게 고침 → 지금 기기 우선
+  }
+  function mergeIdList(b, m, t){
+    function byId(a){ var o = {}; a.forEach(function(e){ o[e.id] = e; }); return o; }
+    function ids(a){ return a.map(function(e){ return e.id; }); }
+    var bm = byId(b), mm = byId(m), tm = byId(t);
+    var order = same(ids(m), ids(b)) ? ids(t).concat(ids(m)) : ids(m).concat(ids(t));
+    var seen = {}, out = [];
+    order.forEach(function(id){
+      if (seen[id]) return; seen[id] = true;
+      var be = bm[id], me = mm[id], te = tm[id], v;
+      if (me && te) v = merge3(be, me, te);
+      else if (me) v = (be && same(me, be)) ? undefined : clone(me);   // 서버에서 지움 + 나는 안 고침 → 지움
+      else if (te) v = (be && same(te, be)) ? undefined : clone(te);   // 내가 지움 + 서버는 안 고침 → 지움
+      if (v !== undefined) out.push(v);
+    });
+    return out;
+  }
+  function applyMerged(merged){
+    state = merged;
+    // 가사 편집기가 열려 있거나 드래그 중이면 그 화면은 건드리지 않음 (입력 중인 내용 보호)
+    if (editingSong === null && !dragEl){ renderAll(); return; }
+    if (!songById(curSongId)) curSongId = state.songs.length ? state.songs[0].id : null;
+    renderSongSwitcher(); renderCueList(); renderLegend(); renderCueMeta();
+    if (!dragEl) renderStage(false);
+    if (editingSong === null) renderLyrics();
+    renderScoreDocs(); renderFiles(); renderMeSelect(); renderSched();
+  }
+
   async function persist(){
     saveTimer = null;
     if (!isAdmin() || !serverLoaded) return;
+    if (persisting){ persistAgain = true; return; }
+    persisting = true;
     setStatus("saving", "저장 중…");
     try{
-      var j = await apiPost({action:"saveSite", pin: pin(), site: state});
+      // 1) 서버 최신본과 병합
+      var latest = await apiGet();
+      var theirs = latest.site ? migrate(latest.site) : null;
+      if (theirs && baseSite && !same(theirs, baseSite)){
+        var mine = clone(state);
+        var merged = merge3(baseSite, mine, theirs);
+        if (!same(merged, mine)) applyMerged(merged);
+      }
+      // 2) 병합본 저장
+      var sent = clone(state);
+      var j = await apiPost({action:"saveSite", pin: pin(), site: sent});
       if (!j.ok){
         if (j.error === "bad_pin"){ logout(); setStatus("error", "비밀번호가 바뀌었어요"); return; }
         throw new Error(j.error || "save");
       }
+      baseSite = sent;
       failCount = 0;
       setStatus("saved", "저장됨");
     }catch(e){
       failCount++;
-      if (failCount <= 3){ setStatus("saving", "저장 재시도…"); schedulePersist(); }
+      if (failCount <= 3){ setStatus("saving", "저장 재시도…"); persistAgain = true; }
       else { failCount = 0; setStatus("error", "저장 실패"); }
+    }finally{
+      persisting = false;
+      if (persistAgain){ persistAgain = false; schedulePersist(); }
     }
   }
 
@@ -1721,10 +1792,14 @@
       if (j.site && (initial || (!isAdmin() && editingSong === null))){
         serverApplied = true;
         state = migrate(j.site);
+        baseSite = clone(state);          // 이 화면이 출발한 서버 버전
         applyRepoFixed();
         renderAll();
       }else{
-        if (!j.site && firstLoad && repoFixed){ applyRepoFixed(); renderAll(); }
+        if (!j.site && firstLoad){
+          baseSite = clone(state);        // 서버에 아직 데이터 없음 → 저장소 기본값에서 출발
+          if (repoFixed){ applyRepoFixed(); renderAll(); }
+        }
         else renderSched();
       }
       setSync("ok", "모두와 공유됨");
